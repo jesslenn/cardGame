@@ -1,5 +1,7 @@
 import Card from "../helpers/card";
 import Zone from "../helpers/zone";
+import io from "socket.io-client";
+import Dealer from "../helpers/dealer";
 
 export default class Game extends Phaser.Scene {
   constructor() {
@@ -14,6 +16,18 @@ export default class Game extends Phaser.Scene {
   }
   create() {
     let scene = this;
+    scene.isPlayerA = false;
+    scene.opponentCards = [];
+
+    scene.socket = io("http://localhost:3000");
+    scene.socket.on("connect", function () {
+      console.log("Connected!");
+    });
+    //SOCKET COMMUNICATIONS (EMITS)
+    scene.socket.on("isPlayerA", function () {
+      //IF this socket is the first to join, we'll change our PlayerA Boolean:
+      scene.isPlayerA = true;
+    });
 
     //Drop Zone:
     scene.zone = new Zone(scene);
@@ -27,18 +41,17 @@ export default class Game extends Phaser.Scene {
       .setColor("#00ffff")
       .setInteractive();
 
-    scene.dealCards = () => {
-      //let's deal 5 cards, not just one:
-      for (let i = 0; i < 5; i++) {
-        let playerCard = new Card(scene); //we are creating a new card on this scene!
-        playerCard.render(475 + i * 100, 650, "card1");
-        //Calls the render function we built in our Card constructor & lays the cards out i * 100 so they are not on top of eachother.
-      }
-    };
+    scene.dealer = new Dealer(scene);
+
+    scene.socket.on("dealCards", function () {
+      scene.dealer.dealCards();
+      scene.dealText.disableInteractive();
+    });
 
     scene.dealText.on("pointerdown", function () {
-      scene.dealCards();
+      scene.socket.emit("dealCards");
     });
+
     scene.dealText.on("pointerover", function () {
       scene.dealText.setColor("#ff69b4");
     });
@@ -66,14 +79,32 @@ export default class Game extends Phaser.Scene {
         gameObject.y = gameObject.input.dragStartY;
       }
     });
-    //This handles the drop IN the designated box!
     scene.input.on("drop", function (pointer, gameObject, dropZone) {
       dropZone.data.values.cards++;
       gameObject.x = dropZone.x - 350 + dropZone.data.values.cards * 50;
       gameObject.y = dropZone.y;
       gameObject.disableInteractive();
+      //When a card is dropped in our client, the socket will emit an event called "cardPlayed",
+      //passing the details of the game object and the client's isPlayerA boolean
+      //(which could be true or false, depending on whether the client was the first to connect to the server).
+      scene.socket.emit("cardPlayed", gameObject, scene.isPlayerA);
     });
-  }
-
-  update() {}
+    scene.socket.on('cardPlayed', function (gameObject, isPlayerA) {
+      //check to see if THIS socket is the one that played
+      //if not, we need to update the screen:
+      if (isPlayerA !== scene.isPlayerA) {
+          let sprite = gameObject.textureKey;
+          //remove one of the opponent cards:
+          scene.opponentCards.shift().destroy();
+          //update dropzone values:
+          scene.dropZone.data.values.cards++;
+          //add the card played
+          let card = new Card(scene);
+          card.render(((scene.dropZone.x - 350) + (scene.dropZone.data.values.cards * 50)), (scene.dropZone.y), sprite).disableInteractive();
+      }
+  })
 }
+
+  update() {} 
+}
+
